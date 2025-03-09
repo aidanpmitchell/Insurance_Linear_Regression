@@ -77,5 +77,5 @@ This project uses the following R packages:
 - performance (assists in checking model performance and assumptions)
 
 ## View the Report
-🔗 [HTML Report (Github Pages)](https://aidanpmitchell.github.io/Insurance_Linear_Regression/)
-🔗 [PDF Report](https://github.com/aidanpmitchell/Insurance_Linear_Regression/blob/25cc88c9e91bddd1680f4791fa53476b30ab7286/report/Insurance_LR.pdf)
+- 🔗 [HTML Report (Github Pages)](https://aidanpmitchell.github.io/Insurance_Linear_Regression/)
+- 🔗 [PDF Report](https://github.com/aidanpmitchell/Insurance_Linear_Regression/blob/25cc88c9e91bddd1680f4791fa53476b30ab7286/report/Insurance_LR.pdf)
