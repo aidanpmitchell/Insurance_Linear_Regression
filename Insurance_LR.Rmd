@@ -1,0 +1,592 @@
+---
+title: "Health Insurance Linear Regression"
+author: "Aidan Mitchell"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+```{r, message=FALSE, error=FALSE}
+# library dependencies
+library(readr)
+library(kableExtra)
+library(dplyr)
+library(ggplot2)
+library(MASS)
+library(gridExtra)
+library(see)
+library(performance)
+```
+
+# Abstract
+
+This analysis examines the impact of **age, smoking status, and obesity** on health insurance charges using a dataset of policyholders. Through **exploratory data analysis**, I identified three distinct groups—**nonsmokers, non-obese smokers, and obese smokers**—each exhibiting unique trends in medical costs. A comprehensive **linear regression model with interaction terms** was constructed to assess how these factors influence charges. 
+\
+
+Key findings indicate that **smokers, particularly those with obesity, experience the highest insurance costs**, with age playing a significant role in increasing charges. While transformations (Box-Cox, log, square root) were tested, they did not significantly improve model performance. The final model explained approximately **85% of the variance in insurance charges** (Adjusted $R^2 \approx 0.86$), confirming the strong influence of these risk factors. 
+\
+
+These insights emphasize the need for **risk-adjusted insurance premiums and targeted health interventions** aimed at smoking cessation and obesity prevention. By integrating statistical modeling with policy implications, this study provides actionable insights for **insurers, healthcare providers, and policymakers** in managing healthcare costs effectively.
+
+\newpage
+
+# Introduction
+## Dataset Overview
+The dataset details medical insurance costs billed to policyholders based on certain demographic characteristics and habits
+
+## Source
+Kaggle: https://www.kaggle.com/datasets/teertha/ushealthinsurancedataset/data
+
+## Variables
+- Age
+   - Data type: Integer
+   - Meaning: The age (in years) of the primary beneficiary
+- Sex
+   - Data type:
+   - Meaning: 
+- bmi
+   - Data type: Float
+   - Meaning: Body Mass Index, providing a simple numeric measure of a person's weight relative to height.
+- Children
+   - Data type: Integer
+   - Meaning: Number of children covered by the insurance plan
+- Smoker
+   - Data type: String (commonly "yes" or "no")
+   - Meaning: Indicates whether the individual smokes tobacco
+- Region
+   - Data type: String
+   - Meaning: The residential area of the beneficiary (often "southwest," "southeast," "northwest," or "northeast")
+- Charges
+   - Data type: Float
+   - Meaning: Individual medical costs billed by health insurance (the target variable)
+# Data Processing
+Describe the steps taken for data cleaning, handling missing values, and any necessary pre- processing. Mention any transformations or feature engineering applied to improve the model’s performance.
+
+## Key Questions
+1. How does the age of insured individuals affect the cost of health insurance?
+2. Does being a smoker affect the cost of health insurance charges?
+
+## Hypotheses
+1. 
+$$
+H_0: \text{An increase in age is not associated with the cost of health insurance costs}
+$$
+$$
+H_A: \text{An increase in age is associated with the cost of health insurance costs}
+$$
+
+2. 
+$$
+H_0: \text{Being a smoker is not associated with the cost of health insurance charges}
+$$
+$$
+H_A: \text{Being a smoker is associated with the cost of health insurance charges}
+$$
+
+# Exploratory Data Analysis (EDA)
+
+```{r}
+Health_insurance <- read.csv("./data/insurance.csv")
+```
+
+## Data Cleaning
+```{r}
+Health_insurance <- na.omit(Health_insurance)
+missing_values <- sum(is.na(Health_insurance))
+print(paste("Total missing values:", missing_values))
+
+Health_insurance<- distinct(Health_insurance)
+duplicate_values <- sum(duplicated(Health_insurance))
+print(paste("Total duplicate values:", duplicate_values))
+```
+
+## Descriptive Statistics
+```{r, message=FALSE, warning=FALSE}
+summary_stats <- summary(Health_insurance)
+kable(summary_stats, caption = "Summary Statistics") %>% 
+  kable_styling(font_size=7, latex_options = c("striped"))
+```
+```{r}
+std_devs <- sapply(Health_insurance[, sapply(Health_insurance, is.numeric)], sd)
+std_dev_df <- data.frame(sd = std_devs)
+kable(std_dev_df, col.names = c("sd"), caption = "Standard Deviations")
+```
+
+# Visualizations
+
+```{r fig.width=10, fig.height=4}
+par(mfrow=c(1, 2), mar=c(4, 4, 2, 1))
+
+boxplot(Health_insurance$charges, horizontal=TRUE, xlab="Charges", main="Boxplot of Charges")
+
+hist(Health_insurance$charges, xlab="Charges", ylab="Frequency", breaks=50, main="Histogram of Charges")
+
+par(mfrow=c(1, 1))
+```
+
+- From the Boxplot, the high number of outliers suggests an underlying factor influencing charges, that may require further exploration
+- The histogram reveals three distinct peaks, suggesting there may be multiple distributions. This indicates that the reason for a high number of outliers may have been due to capturing multiple underlying groups as a single trend.
+
+\
+\
+\
+
+```{r fig.width=5, fig.height=3}
+ggplot(Health_insurance, aes(x=smoker, y=charges)) + 
+  geom_point() + 
+  ggtitle("Health Insurance Charges by Smoker Status") +
+  labs(x = "Smoker Status", y = "Charges")
+```
+
+- After graphing `Charges` against `Smoker Status`, there seems to be a clear upwards trend corresponding to being a smoker. Those who smoke have on average higher charges, based on this initial plot.
+
+\
+
+```{r fig.width=5, fig.height=3}
+ggplot(Health_insurance, aes(x=age, y=charges)) + 
+  geom_point() + 
+  ggtitle("Health Insurance Charges by Age") +
+  labs(x = "Age", y = "Charges")
+```
+
+- But when looking at the plot of `Charges` vs `Age`, we noticed that there are three clear, separate trends beginning from various Y intercepts. This led me to investigate into why this was the case, and what was separating the points into groups like this.
+
+\newpage
+
+- I discovered that the trends that the data follows stems from three different groups
+    - Nonsmokers
+    - Smokers with Low BMI (BMI < 30)
+    - Smokers with High BMI (BMI >= 30)
+    
+- This is imminent if you color code each point for the group that it falls into:
+
+```{r, message=FALSE, warning=FALSE}
+# Prepare data subsets
+Nonsmoker <- filter(Health_insurance, smoker == "no")
+Smoker_High_bmi <- filter(Health_insurance, bmi < 30 & smoker == "yes")
+Smoker_Low_bmi <- filter(Health_insurance, bmi >= 30 & smoker == "yes")
+
+# Set the plot margins (bottom, left, top, right)
+par(mar = c(5, 4, 4, 10) + 0.1)  # Increase the right margin substantially
+
+# Plot for Nonsmoker
+plot(Nonsmoker$age, Nonsmoker$charges,
+     main = "Charges vs. Age for Different Groups",
+     xlab = "Age (years)",
+     ylab = "Charges", 
+     pch = 19, col = "blue",
+     xlim = range(Health_insurance$age), 
+     ylim = range(Health_insurance$charges), 
+     cex = 0.6)
+
+# Add points for other subgroups
+points(Smoker_High_bmi$age, Smoker_High_bmi$charges, pch = 19, col = "red", cex = 0.6)
+points(Smoker_Low_bmi$age, Smoker_Low_bmi$charges, pch = 19, col = "green", cex = 0.6)
+
+# Place the legend outside the plot to the right
+legend(x = par("usr")[2] + 1, y = par("usr")[4],  # Dynamically position the legend
+       legend = c("Nonsmokers", "Smokers, BMI < 30", "Smokers, BMI >= 30"),
+       col = c("blue", "red", "green"), 
+       pch = 19, 
+       title = "Group",
+       xjust = 0, yjust = 1,  # Adjust justification to align correctly
+       xpd = TRUE)  # Allow drawing outside plot region
+
+```
+
+**With this information, I decided to determine how age affects charges separately, for each of these groups:**
+
+\newpage
+
+**Linear regression for Nonsmokers**
+```{r}
+# Linear regression for Nonsmokers
+model_Nonsmoker <- lm(charges ~ age, data = Nonsmoker)
+summary(model_Nonsmoker)
+```
+\
+
+- Model Summary: Charges = -2085.01 + 267.12 * Age
+\
+- Intercept (-2085.01): This indicates the estimated insurance charges when age is zero, which isn't practical but serves as a baseline.
+\
+- Slope (267.12): For every additional year of age, the insurance charges for nonsmokers increase by approximately $267.
+\
+- $R^2$ (0.3936): About 39.36% of the variability in charges among nonsmokers is explained by age. This is a moderate value, indicating that while age does impact charges, other factors are also significant.
+\
+- p-value (< 2.2e-16): The relationship between age and charges is statistically significant.
+
+\newpage
+
+**Linear regression for Smokers with High BMI**
+```{r}
+# Linear regression for Smokers with High BMI
+model_Smoker_High_bmi <- lm(charges ~ age, data = Smoker_High_bmi)
+summary(model_Smoker_High_bmi)
+```
+\
+
+- **Model Summary**: `Charges = 11503.36 + 260.64 * Age`
+\
+- **Intercept (11503.36)**: This indicates the estimated insurance charges when age is zero for smokers with high BMI, reflecting significantly higher baseline charges possibly due to the combined risk factors of smoking and high BMI.
+\
+- **Slope (260.64)**: For every additional year of age, the insurance charges for smokers with high BMI increase by approximately $260.
+\
+- **$R^2$ (0.4818)**: About 48.18% of the variability in charges among smokers with high BMI is explained by age. This is a relatively higher value compared to nonsmokers, suggesting age is a more significant predictor in this group.
+\
+- **p-value (< 2.2e-16)**: The relationship between age and charges is statistically significant, confirming the importance of age in determining insurance costs for smokers with high BMI.
+
+\newpage
+
+**Linear regression for Smokers with Low BMI**
+```{r}
+# Linear regression for Smokers with Low BMI
+model_Smoker_Low_bmi <- lm(charges ~ age, data = Smoker_Low_bmi)
+summary(model_Smoker_Low_bmi)
+```
+\
+
+- **Model Summary**: `Charges = 30558.13 + 281.15 * Age`
+\
+- **Intercept (30558.13)**: The baseline charges for smokers with low BMI are significantly high at $30,558, indicating that smoking is a substantial risk factor for insurance costs, even when BMI is lower.
+\
+- **Slope (281.15)**: Each additional year of age increases charges by approximately $281, the highest among the three groups.
+\
+- **$R^2$ (0.4452)**: About 44.52% of the variability in charges can be explained by age for smokers with low BMI. This indicates a substantial but not exclusive influence of age on charges.
+\
+- **p-value (< 2.2e-16)**: The impact of age on insurance charges in this group is statistically significant.
+
+\newpage
+
+- **We can plot these models on the same graph as before to show the three trends within the points:**
+
+```{r, message=FALSE, warning=FALSE}
+# Prepare data subsets
+Nonsmoker <- filter(Health_insurance, smoker == "no")
+Smoker_High_bmi <- filter(Health_insurance, bmi < 30 & smoker == "yes")
+Smoker_Low_bmi <- filter(Health_insurance, bmi >= 30 & smoker == "yes")
+
+# Set the plot margins (bottom, left, top, right)
+par(mar = c(5, 4, 4, 10) + 0.1)  # Increase the right margin substantially
+
+# Plot for Nonsmoker
+plot(Nonsmoker$age, Nonsmoker$charges,
+     main = "Charges vs. Age for Different Groups",
+     xlab = "Age (years)",
+     ylab = "Charges", 
+     pch = 19, col = "blue",
+     xlim = range(Health_insurance$age), 
+     ylim = range(Health_insurance$charges), 
+     cex = 0.6)
+
+# Add points for other subgroups
+points(Smoker_High_bmi$age, Smoker_High_bmi$charges, pch = 19, col = "red", cex = 0.6)
+points(Smoker_Low_bmi$age, Smoker_Low_bmi$charges, pch = 19, col = "green", cex = 0.6)
+
+# Regression lines for each subgroup
+abline(lm(charges ~ age, data = Nonsmoker), col = "blue")
+abline(lm(charges ~ age, data = Smoker_High_bmi), col = "red")
+abline(lm(charges ~ age, data = Smoker_Low_bmi), col = "green")
+
+# Place the legend outside the plot to the right
+legend(x = par("usr")[2] + 1, y = par("usr")[4],  # Dynamically position the legend
+       legend = c("Nonsmokers", "Smokers, BMI < 30", "Smokers, BMI >= 30"),
+       col = c("blue", "red", "green"), 
+       pch = 19, 
+       title = "Group",
+       xjust = 0, yjust = 1,  # Adjust justification to align correctly
+       xpd = TRUE)  # Allow drawing outside plot region
+
+```
+
+**We can now check our model assumptions for each of these groups:**
+
+## Assumptions of Linearity/Normality
+
+```{r, fig.height=4}
+par(mfrow=c(1, 4))
+
+plot(lm(charges ~ age, data=Health_insurance), which = 1, col = "black", main = "All Values")
+plot(model_Smoker_High_bmi, which = 1, col = "red", main = "High BMI Smokers")
+plot(model_Smoker_Low_bmi, which = 1, col = "green", main = "Low BMI Smokers")
+plot(model_Nonsmoker, which = 1, col = "blue", main = "Nonsmokers")
+
+par(mfrow=c(1, 1)) 
+```
+```{r, fig.height=4}
+par(mfrow=c(1, 4))
+
+plot(lm(charges ~ age, data=Health_insurance), which = 2, col = "black", main = "All Values")
+plot(model_Smoker_High_bmi, which = 2, col = "red", main = "High BMI Smokers")
+plot(model_Smoker_Low_bmi, which = 2, col = "green", main = "Low BMI Smokers")
+plot(model_Nonsmoker, which = 2, col = "blue", main = "Nonsmokers")
+
+par(mfrow=c(1, 1)) 
+```
+
+- Based on the residuals and Q-Q plots, linearity and normality cannot be assumed. Along with attempts of log and square root transformations, the models show that the variability of the data is inconsistent.
+
+\newpage
+
+After initially examining the impact of age on health insurance charges within three distinct groups: nonsmokers, smokers with low BMI, and smokers with high BMI, it became evident that each group exhibited unique trends and influences on charges.
+
+## Model Selection Approach: Forward Selection
+
+To determine the most appropriate predictors for our regression model, I employed **stepwise selection techniques**. These methods help streamline the model by including only variables that significantly contribute to explaining variations in `charges`, improving both **interpretability and predictive accuracy**.
+
+### Stepwise Selection Methods Considered
+1. **Forward Selection**: Starts with an **empty model** (only an intercept) and **adds predictors one by one** based on their statistical significance.
+2. **Backward Elimination**: Begins with the **full model** (all predictors included) and **removes insignificant predictors** sequentially.
+3. **Both Directions**: Combines forward and backward approaches, **adding or removing** variables based on model fit criteria.
+
+### Why I Chose Forward Selection
+After comparing different selection methods using the `step()` function, we opted for **forward selection** for the following reasons:
+
+- **Avoids Overfitting**: Since forward selection starts with **no predictors**, it only adds variables that improve model performance, making it **less prone to overfitting** than backward selection.
+\
+- **Better Interpretability**: By **sequentially adding** significant variables, forward selection ensures that only the **most relevant predictors** are included, resulting in a **simpler and more interpretable model**.
+\
+- **Better Performance Compared to Other Models**: I evaluated the **performance of forward, backward, and full models** using the `compare_performance()` function. The **forward selection model outperformed the others**, as demonstrated in the performance plot:
+
+
+```{r error=FALSE, message=FALSE}
+df <- Health_insurance
+
+# Ensure categorical variables are factors
+df$sex <- as.factor(df$sex)
+df$smoker <- as.factor(df$smoker)
+df$region <- as.factor(df$region)
+
+# Full model (all predictors included)
+full_model <- lm(charges ~ ., data = df)
+
+# Stepwise selection (both directions)
+step_model <- step(full_model, direction = "both", trace = 0)
+
+# Minimal model (intercept only)
+minimal_model <- lm(charges ~ 1, data = df)
+
+# Forward selection (incrementally adding variables)
+forward_model <- step(minimal_model, direction = "forward", 
+                      scope = list(lower = formula(minimal_model), upper = formula(full_model)), 
+                      trace = 0)
+
+# Backward elimination (removing insignificant variables)
+backward_model <- step(full_model, direction = "backward", trace = 0)
+
+# Compare performance of all models
+PerfModel <- compare_performance(forward_model, backward_model, full_model)
+
+# Plot comparison of model performances
+plot(PerfModel)
+```
+**We can then look at each step of the forward selection process to see how AIC is affected:** 
+\
+
+```{r}
+# Initialize dataframe to store AIC values and added predictors
+stepwise_aic <- data.frame(Num_Variables = numeric(), AIC = numeric(), Added_Variable = character())
+
+# Custom function to track each step of forward selection
+track_forward <- function(object, scope, direction = "forward", trace = 1) {
+  step_result <- step(object, direction = direction, scope = scope, trace = trace, k = 2)
+  
+  # Extract step-by-step AIC and predictor names
+  aic_values <- step_result$anova$AIC  # AIC values at each step
+  predictors <- rownames(step_result$anova)  # Variables added at each step
+
+  # Store results in a dataframe
+  stepwise_aic <<- data.frame(Num_Variables = seq_along(aic_values), 
+                              AIC = aic_values, 
+                              Added_Variable = predictors)
+  
+  return(step_result)
+}
+
+# Perform Forward Selection and track AIC reduction
+forward_model <- track_forward(minimal_model, scope = list(lower = formula(minimal_model), upper = formula(full_model)))
+```
+\
+**Continuing on with the forward selection past the addition of smoking status, age, and BMI has virtually no benefit to the model, and only adds risk of overfitting, as shown below:**
+
+```{r fig.width=5, fig.height=3}
+# Plot AIC Reduction at Each Step of Forward Selection
+ggplot(stepwise_aic, aes(x = Num_Variables, y = AIC, label = Added_Variable)) +
+  geom_line() +
+  geom_point() +
+  geom_text(vjust = -1) +  # Annotate variables at each step
+  ggtitle("AIC Reduction at Each Step of Forward Selection") +
+  labs(x = "Number of Variables in Model", y = "AIC Value") +
+  theme_minimal()
+```
+
+\newpage
+
+To explore the combined effects of age, smoking status, and BMI more holistically, a comprehensive model was developed. This model incorporated all groups into a single analysis framework, allowing for the examination of both the individual and interactive effects of these factors on insurance charges. By transitioning to this  model, the analysis could leverage interaction terms (age:group) to precisely capture how each group's age-related increase in charges differs, providing a deeper understanding of the underlying patterns observed in the preliminary group-specific analyses.
+
+__Creation and Usage of the `group` Variable for Interaction Terms__
+
+In the comprehensive regression model, the `group` variable was created to classify individuals into distinct categories based on their smoking status and body mass index (BMI).
+
+**Steps to Create the `group` Variable:**
+
+1. **BMI Classification**: Individuals were first categorized as `obese` or `not obese`, with obesity defined as having a BMI of 30 or higher.
+2. **Smoking Status**: Each individual's smoking status was already recorded as 'yes' or 'no', and was re-coded into a numeric format where `1` represents smokers and `0` represents non-smokers.
+3. **Group Definition**: Using the `case_when` function from the `dplyr` package, individuals were segmented into three groups:
+   - `not smoker`: Individuals who do not smoke.
+   - `not obese smoker`: Smokers who are not obese.
+   - `obese smoker`: Smokers who are obese.
+   
+These categories were then converted into a factor variable with levels explicitly ordered to ensure that the model's intercept corresponds to the `not smoker` group, serving as the baseline category against which the other groups are compared.
+
+
+```{r}
+df <- Health_insurance
+df$obese <- ifelse(df$bmi >= 30, 1, 0)
+df$smoker <- as.numeric(df$smoker == "yes")
+
+df$group <- case_when(
+  df$smoker == 0 ~ "not smoker",        
+  df$smoker == 1 & df$obese == 0 ~ "not obese smoker", 
+  df$smoker == 1 & df$obese == 1 ~ "obese smoker"   
+)
+df$group <- factor(df$group, levels = c("not smoker", "not obese smoker", "obese smoker"))
+```
+```{r}
+group_model <- lm(charges ~ group + age:group, data = df)
+summary(group_model)
+```
+
+\newpage
+
+# Interpret Results
+## Model Overview
+- **Formula**: `charges ~ group + age:group`
+- The model addresses both the absolute differences in charges among the groups and the interaction effects between age and group categories, to discern how age-related changes in charges differ across these groups.
+
+## Results
+
+**Coefficients**
+
+- **Intercept**: The baseline charge for the reference group (non-smokers) when age is zero is estimated at -2085.008. This negative value, while not practical, sets a baseline for the model.
+- **Non-obese smoker**: This group is associated with an increase in charges of approximately $13,588 over non-smokers, adjusting for age.
+- **Obese smoker**: Smokers who are obese incur about $32,643 more in charges than non-smokers, indicating a significant impact of combined smoking and obesity on health costs.
+- **Age effects**:
+  - **Non-smokers**: Each additional year of age increases charges by approximately $267.
+  - **Non-obese smokers**: Each year of age adds about $261 to charges, slightly less than non-smokers.
+  - **Obese smokers**: Each year of age results in an approximate $281 increase in charges, the highest among the groups.
+
+**Statistical Significance**
+
+- All predictors have p-values < 2.2e-16, affirming the robustness of the findings.
+
+**Model Fit**
+
+- **Residual standard error**: 4565 on 1331 degrees of freedom
+- **Multiple R-squared**: 0.8584; **Adjusted R-squared**: 0.8579
+  - The model explains approximately 85.84% of the variance in insurance charges, indicating excellent model fit.
+- **F-statistic**: 1614 on 5 and 1331 DF, p-value < 2.2e-16
+  - The overall model is statistically significant, demonstrating strong explanatory power.
+
+# Assumptions Checking
+
+```{r}
+par(mfrow = c(2, 2))
+plot(group_model)
+```
+
+**1. Residuals vs Fitted**: This plot checks for non-linearity, homoscedasticity (equal variance), and the presence of outliers.
+
+- The residuals do not display any clear patterns, indicating no obvious non-linearity.
+- The dispersion of residuals around the horizontal zero line suggests that the variance of residuals is relatively consistent across the range of fitted values (homoscedasticity).
+- Several outliers are evident, as some residuals are significantly far from the zero line.
+
+**2. Q-Q Plot**: Assesses whether the residuals are normally distributed.
+
+- The points mostly follow the theoretical line, indicating that the residuals are decently normal.
+- Deviations from the line at both tails suggest the presence of outliers with potentially heavy tails.
+
+**3. Scale-Location Plot**: Checks if residuals are spread equally along the ranges of predictors (homoscedasticity).
+
+- The plot shows a relatively constant spread across the range of fitted values, supporting the assumption of equal variance.
+- Like the Residuals vs Fitted plot, the presence of outliers is noticeable.
+
+**4. Residuals vs Leverage**: Identifies influential observations that might disproportionately influence the model's estimates.
+
+- Most data points exhibit low leverage, indicating they do not unduly influence the model.
+- A few points have high leverage and exceed the Cook's distance threshold, suggesting they are influential and could be distorting the regression results.
+- Specific points labeled (e.g., 0578, 05447) appear particularly influential, warranting further investigation.
+  
+## Evaluating Transformations for Model Improvement
+
+To assess whether transformations could improve model fit and better meet linear regression assumptions, I applied several transformations to the dependent variable (`charges`), including:
+
+1. **Inverse Transformation (`1/charges`)**
+2. **Square Root Transformation (`sqrt(charges)`)**
+3. **Box-Cox Transformation (to identify an optimal power transformation)**
+
+### **Applying Transformations**
+The following transformations were applied, and models were refitted to evaluate changes in performance:
+
+```{r}
+# Inverse transformation
+Health_insurance$inv_charges <- 1 / Health_insurance$charges
+inv_model <- lm(inv_charges ~ age + bmi + smoker + age:smoker, data = Health_insurance)
+
+r_squared1 <- summary(inv_model)$r.squared
+print(paste("Inverse R-squared:", r_squared1))
+```
+```{R}
+# Square root transformation
+Health_insurance$sqrt_charges <- sqrt(Health_insurance$charges)
+sqrt_model <- lm(sqrt_charges ~ age + bmi + smoker + age:smoker, data = Health_insurance)
+
+r_squared2 <- summary(sqrt_model)$r.squared
+print(paste("Square Root R-squared:", r_squared2))
+```
+```{r}
+initial_model <- lm(charges ~ age + bmi + smoker + age:smoker, data = Health_insurance)
+
+# Perform Box-Cox transformation to find the optimal lambda
+boxcox_result <- boxcox(initial_model, lambda = seq(-2, 2, 0.1))
+
+optimal_lambda <- boxcox_result$x[which.max(boxcox_result$y)]
+
+if (round(optimal_lambda, 2) == 0) {
+  Health_insurance$transformed_charges <- log(Health_insurance$charges)
+} else {
+  Health_insurance$transformed_charges <- (Health_insurance$charges^optimal_lambda - 1) / optimal_lambda 
+}
+
+boxcox_model <- lm(transformed_charges ~ age + bmi + smoker + age:smoker, data = Health_insurance)
+
+r_squared3 <- summary(boxcox_model)$r.squared
+print(paste("BoxCox R-squared:", r_squared3))
+```
+
+**Thus, the attempted transformations do not have beneficial impacts on the model**
+
+\newpage
+
+# Conclusion
+## Key Findings
+This analysis has demonstrated that both smoking and obesity are associated with significant increases in health insurance charges, and these effects are further influenced by the age of the insured individuals. Key findings from the analysis include:
+
+- **Smokers with obesity face the highest charges**, with costs significantly higher than those for non-smokers and smokers without obesity.
+- **Age-related increases in charges** are slightly more pronounced in smokers with high BMI, indicating that aging in these risk groups is associated with higher health costs.
+
+## Implications
+The findings underscore the need for health insurance policies and health interventions that are tailored to address the specific risk profiles of individuals:
+
+- **Policy Adjustments**: Insurance companies might consider adjusting premiums and coverage terms to more accurately reflect the increased risks associated with smoking and obesity. This could include developing tiered premium systems or offering incentives for lifestyle changes.
+- **Targeted Interventions**: Healthcare providers and policymakers could develop targeted health interventions aimed at smoking cessation and weight management, especially as these factors together significantly drive up healthcare costs.
+- **Preventive Measures**: Early intervention in younger populations who are at risk of becoming smokers or developing obesity could reduce long-term costs and improve health outcomes.
+
+## Limitations
+While the analysis provides compelling insights, there are several limitations:
+
+- **Causal Inference**: The study design is observational, which limits the ability to draw causal conclusions. The associations observed may be influenced by unmeasured confounding factors such as genetics, socio-economic status, or other lifestyle habits.
+- **Data Scope**: The analysis is based on existing datasets that may not capture all relevant variables, such as diet, physical activity, or detailed medical history, which could influence insurance charges.
+- **Generalizability**: The results are dependent on the specific demographic and geographic characteristics of the dataset. Findings may differ in other populations with different health, economic, or cultural backgrounds.
