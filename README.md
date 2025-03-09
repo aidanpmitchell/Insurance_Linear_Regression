@@ -43,11 +43,13 @@ the strong influence of these risk factors.
 ## Project Structure
 ```
 Insurance_Linear_Regression/
-│── README.md               # Project documentation
-│── Insurance_LR.Rmd        # Main R Markdown analysis
+│── data/                   # Sample dataset 
+│   ├── insurance.csv
 │── report/                 # Rendered PDF report
 │   ├── insurance_LR.pdf
-│── data/                   # Sample dataset 
+│── Insurance_LR.Rmd        # Main R Markdown analysis
+│── README.md               # Project documentation
+│── index.html              # Rendered HTML report for GitHub Pages
 ```
 
 ## How to Run
