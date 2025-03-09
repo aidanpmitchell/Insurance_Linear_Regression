@@ -41,12 +41,14 @@ the strong influence of these risk factors.
 - **Residuals vs Leverage**: A few high-leverage points suggest potential influential observations that may warrant further investigation.
 
 ## Project Structure
+```
 Insurance_Linear_Regression/
 │── README.md               # Project documentation
 │── Insurance_LR.Rmd        # Main R Markdown analysis
 │── report/                 # Rendered PDF report
 │   ├── insurance_LR.pdf
 │── data/                   # Sample dataset 
+```
 
 ## How to Run
 1. Clone the repository:
